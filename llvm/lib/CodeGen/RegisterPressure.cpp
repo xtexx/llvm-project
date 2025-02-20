@@ -79,15 +79,12 @@ static void decreaseSetPressure(std::vector<unsigned> &CurrSetPressure,
 LLVM_DUMP_METHOD
 void llvm::dumpRegSetPressure(ArrayRef<unsigned> SetPressure,
                               const TargetRegisterInfo *TRI) {
-  bool Empty = true;
   for (unsigned i = 0, e = SetPressure.size(); i < e; ++i) {
     if (SetPressure[i] != 0) {
-      dbgs() << TRI->getRegPressureSetName(i) << "=" << SetPressure[i] << '\n';
-      Empty = false;
+      dbgs() << TRI->getRegPressureSetName(i) << "=" << SetPressure[i] << ' ';
     }
   }
-  if (Empty)
-    dbgs() << "\n";
+  dbgs() << "\n";
 }
 
 LLVM_DUMP_METHOD
@@ -234,7 +231,7 @@ void LiveRegSet::clear() {
 }
 
 static const LiveRange *getLiveRange(const LiveIntervals &LIS, unsigned Reg) {
-  if (Register::isVirtualRegister(Reg))
+  if (Register(Reg).isVirtual())
     return &LIS.getInterval(Reg);
   return LIS.getCachedRegUnit(Reg);
 }
