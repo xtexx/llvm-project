@@ -606,6 +606,9 @@ void OMPClauseProfiler::VisitOMPNoOpenMPClause(const OMPNoOpenMPClause *) {}
 void OMPClauseProfiler::VisitOMPNoOpenMPRoutinesClause(
     const OMPNoOpenMPRoutinesClause *) {}
 
+void OMPClauseProfiler::VisitOMPNoOpenMPConstructsClause(
+    const OMPNoOpenMPConstructsClause *) {}
+
 void OMPClauseProfiler::VisitOMPNoParallelismClause(
     const OMPNoParallelismClause *) {}
 
@@ -1001,6 +1004,10 @@ void StmtProfiler::VisitOMPLoopTransformationDirective(
 }
 
 void StmtProfiler::VisitOMPTileDirective(const OMPTileDirective *S) {
+  VisitOMPLoopTransformationDirective(S);
+}
+
+void StmtProfiler::VisitOMPStripeDirective(const OMPStripeDirective *S) {
   VisitOMPLoopTransformationDirective(S);
 }
 
@@ -2543,6 +2550,16 @@ void OpenACCClauseProfiler::VisitIfClause(const OpenACCIfClause &Clause) {
 void OpenACCClauseProfiler::VisitCopyClause(const OpenACCCopyClause &Clause) {
   VisitClauseWithVarList(Clause);
 }
+
+void OpenACCClauseProfiler::VisitLinkClause(const OpenACCLinkClause &Clause) {
+  VisitClauseWithVarList(Clause);
+}
+
+void OpenACCClauseProfiler::VisitDeviceResidentClause(
+    const OpenACCDeviceResidentClause &Clause) {
+  VisitClauseWithVarList(Clause);
+}
+
 void OpenACCClauseProfiler::VisitCopyInClause(
     const OpenACCCopyInClause &Clause) {
   VisitClauseWithVarList(Clause);
@@ -2803,6 +2820,11 @@ void StmtProfiler::VisitOpenACCUpdateConstruct(
   VisitStmt(S);
   OpenACCClauseProfiler P{*this};
   P.VisitOpenACCClauseList(S->clauses());
+}
+
+void StmtProfiler::VisitOpenACCAtomicConstruct(
+    const OpenACCAtomicConstruct *S) {
+  VisitStmt(S);
 }
 
 void StmtProfiler::VisitHLSLOutArgExpr(const HLSLOutArgExpr *S) {
