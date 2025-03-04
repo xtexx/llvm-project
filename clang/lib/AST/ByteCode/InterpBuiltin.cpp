@@ -397,21 +397,10 @@ static bool interp__builtin_fmin(InterpState &S, CodePtr OpPC,
   const Floating &LHS = getParam<Floating>(Frame, 0);
   const Floating &RHS = getParam<Floating>(Frame, 1);
 
-  Floating Result;
-
-  if (IsNumBuiltin) {
-    Result = llvm::minimumnum(LHS.getAPFloat(), RHS.getAPFloat());
-  } else {
-    // When comparing zeroes, return -0.0 if one of the zeroes is negative.
-    if (LHS.isZero() && RHS.isZero() && RHS.isNegative())
-      Result = RHS;
-    else if (LHS.isNan() || RHS < LHS)
-      Result = RHS;
-    else
-      Result = LHS;
-  }
-
-  S.Stk.push<Floating>(Result);
+  if (IsNumBuiltin)
+    S.Stk.push<Floating>(llvm::minimumnum(LHS.getAPFloat(), RHS.getAPFloat()));
+  else
+    S.Stk.push<Floating>(minnum(LHS.getAPFloat(), RHS.getAPFloat()));
   return true;
 }
 
@@ -421,21 +410,10 @@ static bool interp__builtin_fmax(InterpState &S, CodePtr OpPC,
   const Floating &LHS = getParam<Floating>(Frame, 0);
   const Floating &RHS = getParam<Floating>(Frame, 1);
 
-  Floating Result;
-
-  if (IsNumBuiltin) {
-    Result = llvm::maximumnum(LHS.getAPFloat(), RHS.getAPFloat());
-  } else {
-    // When comparing zeroes, return +0.0 if one of the zeroes is positive.
-    if (LHS.isZero() && RHS.isZero() && LHS.isNegative())
-      Result = RHS;
-    else if (LHS.isNan() || RHS > LHS)
-      Result = RHS;
-    else
-      Result = LHS;
-  }
-
-  S.Stk.push<Floating>(Result);
+  if (IsNumBuiltin)
+    S.Stk.push<Floating>(llvm::maximumnum(LHS.getAPFloat(), RHS.getAPFloat()));
+  else
+    S.Stk.push<Floating>(maxnum(LHS.getAPFloat(), RHS.getAPFloat()));
   return true;
 }
 
@@ -1538,9 +1516,12 @@ static bool interp__builtin_constant_p(InterpState &S, CodePtr OpPC,
   if (ArgType->isIntegralOrEnumerationType() || ArgType->isFloatingType() ||
       ArgType->isAnyComplexType() || ArgType->isPointerType() ||
       ArgType->isNullPtrType()) {
+    auto PrevDiags = S.getEvalStatus().Diag;
+    S.getEvalStatus().Diag = nullptr;
     InterpStack Stk;
     Compiler<EvalEmitter> C(S.Ctx, S.P, S, Stk);
     auto Res = C.interpretExpr(Arg, /*ConvertResultToRValue=*/Arg->isGLValue());
+    S.getEvalStatus().Diag = PrevDiags;
     if (Res.isInvalid()) {
       C.cleanup();
       Stk.clear();
@@ -1652,27 +1633,27 @@ static bool interp__builtin_operator_new(InterpState &S, CodePtr OpPC,
     return false;
   }
 
+  bool IsArray = NumElems.ugt(1);
   std::optional<PrimType> ElemT = S.getContext().classify(ElemType);
   DynamicAllocator &Allocator = S.getAllocator();
   if (ElemT) {
-    if (NumElems.ule(1)) {
-      const Descriptor *Desc =
-          S.P.createDescriptor(NewCall, *ElemT, Descriptor::InlineDescMD,
-                               /*IsConst=*/false, /*IsTemporary=*/false,
-                               /*IsMutable=*/false);
-      Block *B = Allocator.allocate(Desc, S.getContext().getEvalID(),
+    if (IsArray) {
+      Block *B = Allocator.allocate(NewCall, *ElemT, NumElems.getZExtValue(),
+                                    S.Ctx.getEvalID(),
                                     DynamicAllocator::Form::Operator);
       assert(B);
-
-      S.Stk.push<Pointer>(B);
+      S.Stk.push<Pointer>(Pointer(B).atIndex(0));
       return true;
     }
-    assert(NumElems.ugt(1));
 
-    Block *B =
-        Allocator.allocate(NewCall, *ElemT, NumElems.getZExtValue(),
-                           S.Ctx.getEvalID(), DynamicAllocator::Form::Operator);
+    const Descriptor *Desc =
+        S.P.createDescriptor(NewCall, *ElemT, Descriptor::InlineDescMD,
+                             /*IsConst=*/false, /*IsTemporary=*/false,
+                             /*IsMutable=*/false);
+    Block *B = Allocator.allocate(Desc, S.getContext().getEvalID(),
+                                  DynamicAllocator::Form::Operator);
     assert(B);
+
     S.Stk.push<Pointer>(B);
     return true;
   }
@@ -1680,21 +1661,22 @@ static bool interp__builtin_operator_new(InterpState &S, CodePtr OpPC,
   assert(!ElemT);
   // Structs etc.
   const Descriptor *Desc = S.P.createDescriptor(
-      Call, ElemType.getTypePtr(), Descriptor::InlineDescMD,
+      NewCall, ElemType.getTypePtr(),
+      IsArray ? std::nullopt : Descriptor::InlineDescMD,
       /*IsConst=*/false, /*IsTemporary=*/false, /*IsMutable=*/false,
       /*Init=*/nullptr);
 
-  if (NumElems.ule(1)) {
-    Block *B = Allocator.allocate(Desc, S.getContext().getEvalID(),
-                                  DynamicAllocator::Form::Operator);
+  if (IsArray) {
+    Block *B =
+        Allocator.allocate(Desc, NumElems.getZExtValue(), S.Ctx.getEvalID(),
+                           DynamicAllocator::Form::Operator);
     assert(B);
-    S.Stk.push<Pointer>(B);
+    S.Stk.push<Pointer>(Pointer(B).atIndex(0));
     return true;
   }
 
-  Block *B =
-      Allocator.allocate(Desc, NumElems.getZExtValue(), S.Ctx.getEvalID(),
-                         DynamicAllocator::Form::Operator);
+  Block *B = Allocator.allocate(Desc, S.getContext().getEvalID(),
+                                DynamicAllocator::Form::Operator);
   assert(B);
   S.Stk.push<Pointer>(B);
   return true;

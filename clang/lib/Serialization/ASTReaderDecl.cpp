@@ -414,6 +414,8 @@ public:
   void VisitEmptyDecl(EmptyDecl *D);
   void VisitLifetimeExtendedTemporaryDecl(LifetimeExtendedTemporaryDecl *D);
 
+  void VisitOpenACCDeclareDecl(OpenACCDeclareDecl *D);
+
   void VisitDeclContext(DeclContext *DC, uint64_t &LexicalOffset,
                         uint64_t &VisibleOffset, uint64_t &ModuleLocalOffset,
                         uint64_t &TULocalOffset);
@@ -1064,6 +1066,7 @@ void ASTDeclReader::VisitFunctionDecl(FunctionDecl *FD) {
   FD->setHasImplicitReturnZero(FunctionDeclBits.getNextBit());
   FD->setIsMultiVersion(FunctionDeclBits.getNextBit());
   FD->setLateTemplateParsed(FunctionDeclBits.getNextBit());
+  FD->setInstantiatedFromMemberTemplate(FunctionDeclBits.getNextBit());
   FD->setFriendConstraintRefersToEnclosingTemplate(
       FunctionDeclBits.getNextBit());
   FD->setUsesSEHTry(FunctionDeclBits.getNextBit());
@@ -2532,6 +2535,7 @@ RedeclarableResult ASTDeclReader::VisitClassTemplateSpecializationDeclImpl(
   D->TemplateArgs = TemplateArgumentList::CreateCopy(C, TemplArgs);
   D->PointOfInstantiation = readSourceLocation();
   D->SpecializationKind = (TemplateSpecializationKind)Record.readInt();
+  D->StrictPackMatch = Record.readBool();
 
   bool writtenAsCanonicalDecl = Record.readInt();
   if (writtenAsCanonicalDecl) {
@@ -3095,6 +3099,14 @@ void ASTDeclReader::VisitOMPDeclareMapperDecl(OMPDeclareMapperDecl *D) {
 
 void ASTDeclReader::VisitOMPCapturedExprDecl(OMPCapturedExprDecl *D) {
   VisitVarDecl(D);
+}
+
+void ASTDeclReader::VisitOpenACCDeclareDecl(OpenACCDeclareDecl *D) {
+  VisitDecl(D);
+  D->DirKind = Record.readEnum<OpenACCDirectiveKind>();
+  D->DirectiveLoc = Record.readSourceLocation();
+  D->EndLoc = Record.readSourceLocation();
+  Record.readOpenACCClauseList(D->Clauses);
 }
 
 //===----------------------------------------------------------------------===//
@@ -3746,6 +3758,18 @@ void ASTDeclReader::checkMultipleDefinitionInNamedModules(ASTReader &Reader,
       Func && Func->getTemplateSpecializationInfo())
     return;
 
+  // The module ownership of in-class friend declaration is not straightforward.
+  // Avoid diagnosing such cases.
+  if (D->getFriendObjectKind() || Previous->getFriendObjectKind())
+    return;
+
+  // Skip diagnosing in-class declarations.
+  if (!Previous->getLexicalDeclContext()
+           ->getNonTransparentContext()
+           ->isFileContext() ||
+      !D->getLexicalDeclContext()->getNonTransparentContext()->isFileContext())
+    return;
+
   Module *M = Previous->getOwningModule();
   if (!M)
     return;
@@ -4189,6 +4213,9 @@ Decl *ASTReader::ReadDeclRecord(GlobalDeclID ID) {
   case DECL_IMPLICIT_CONCEPT_SPECIALIZATION:
     D = ImplicitConceptSpecializationDecl::CreateDeserialized(Context, ID,
                                                               Record.readInt());
+    break;
+  case DECL_OPENACC_DECLARE:
+    D = OpenACCDeclareDecl::CreateDeserialized(Context, ID, Record.readInt());
     break;
   }
 
